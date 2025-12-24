@@ -389,9 +389,24 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 }
 
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
-  // REVISIT: try to determine which Region (from transport_codes[1]) that Sender is indicating for replies/responses
-  //    if unknown, fallback to finding Region from transport_codes[0], the 'scope' used by Sender
+  // Capture test mode packets from flood
+  if (packet->payload_len >= sizeof(TestPacket) && packet->payload[0] == TEST_MAGIC_BYTE) {
+    TestPacket* tp = (TestPacket*)packet->payload;
+    logTestPacket(tp->device_id, tp->seq_num, 
+                  tp->timestamp,  // tx_time (sender's timestamp)
+                  getRTCClock()->getCurrentTime(),  // rx_time (receiver's timestamp)
+                  (int8_t)(_radio->getLastSNR() * 4),
+                  (int8_t)_radio->getLastRSSI(),
+                  packet->path_len);
+    // Return false to allow packet to continue being processed/forwarded
+  }
   return false;
+}
+
+bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
+  if (!_prefs.enable_fwd) return false;
+  if (packet->isRouteFlood() && packet->path_len >= _prefs.flood_max) return false;
+  return true;
 }
 
 void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -673,6 +688,17 @@ void MyMesh::onRawDataRecv(mesh::Packet *packet) {
   } else {
     MESH_DEBUG_PRINTLN("onRawDataRecv(), data received while app offline");
   }
+
+  // Check for test mode packet
+  if (packet->payload_len >= sizeof(TestPacket) && packet->payload[0] == TEST_MAGIC_BYTE) {
+    TestPacket* tp = (TestPacket*)packet->payload;
+    logTestPacket(tp->device_id, tp->seq_num,
+                  tp->timestamp,  // tx_time
+                  getRTCClock()->getCurrentTime(),  // rx_time
+                  (int8_t)(_radio->getLastSNR() * 4),
+                  (int8_t)_radio->getLastRSSI(),
+                  packet->isRouteFlood() ? packet->path_len : 0);
+  }
 }
 
 void MyMesh::onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code, uint8_t flags,
@@ -740,6 +766,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.cr = LORA_CR;
   _prefs.tx_power_dbm = LORA_TX_POWER;
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
+  _prefs.enable_fwd = 1;     // Enable forwarding by default (repeater mode)
+  _prefs.flood_max = 64;     // Max path length for flood packets
 }
 
 void MyMesh::begin(bool has_display) {
@@ -803,6 +831,9 @@ void MyMesh::begin(bool has_display) {
 
   radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_set_tx_power(_prefs.tx_power_dbm);
+
+  // Auto-start test mode on boot
+  initTestMode();
 }
 
 const char *MyMesh::getNodeName() {
@@ -1647,8 +1678,14 @@ void MyMesh::checkCLIRescueCmd() {
     cli_command[sizeof(cli_command)-1] = '\r';
   }
 
-  if (len > 0 && cli_command[len - 1] == '\r') {  // received complete line
+  // Support both \r and \n as line endings
+  if (len > 0 && (cli_command[len - 1] == '\r' || cli_command[len - 1] == '\n')) {
     cli_command[len - 1] = 0;  // replace newline with C string null terminator
+    len--;
+    // Also strip \r if \r\n was sent
+    if (len > 0 && cli_command[len - 1] == '\r') {
+      cli_command[len - 1] = 0;
+    }
 
     if (memcmp(cli_command, "set ", 4) == 0) {
       const char* config = &cli_command[4];
@@ -1797,6 +1834,22 @@ void MyMesh::checkCLIRescueCmd() {
 
     } else if (strcmp(cli_command, "reboot") == 0) {
       board.reboot();  // doesn't return
+    } else if (strcmp(cli_command, "test dump") == 0) {
+      dumpTestLog();
+    } else if (strcmp(cli_command, "test status") == 0) {
+      Serial.printf("TESTSTATUS %02X%02X seq=%d log=%d\n",
+        my_device_id[0], my_device_id[1],
+        test_seq_num, test_log_count);
+    } else if (strcmp(cli_command, "config") == 0) {
+      Serial.printf("Radio Config:\n");
+      Serial.printf("  freq: %.3f MHz\n", _prefs.freq);
+      Serial.printf("  sf: %d\n", _prefs.sf);
+      Serial.printf("  bw: %.1f kHz\n", _prefs.bw);
+      Serial.printf("  cr: %d\n", _prefs.cr);
+      Serial.printf("  tx_power: %d dBm\n", _prefs.tx_power_dbm);
+      Serial.printf("  fwd: %d, flood_max: %d\n", _prefs.enable_fwd, _prefs.flood_max);
+    } else if (strcmp(cli_command, "help") == 0) {
+      Serial.println("Commands: test status, test dump, config, reboot, help");
     } else {
       Serial.println("  Error: unknown command");
     }
@@ -1835,6 +1888,21 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
+  // Check for ~~~ serial trigger to enter CLI rescue mode
+  static uint8_t tilde_count = 0;
+  while (!_cli_rescue && Serial.available()) {
+    char c = Serial.read();
+    if (c == '~') {
+      tilde_count++;
+      if (tilde_count >= 3) {
+        enterCLIRescue();
+        tilde_count = 0;
+      }
+    } else {
+      tilde_count = 0;
+    }
+  }
+
   if (_cli_rescue) {
     checkCLIRescueCmd();
   } else {
@@ -1850,6 +1918,11 @@ void MyMesh::loop() {
 #ifdef DISPLAY_CLASS
   if (_ui) _ui->setHasConnection(_serial->isConnected());
 #endif
+
+  // Test mode: periodic broadcast
+  if (next_test_broadcast > 0 && millisHasNowPassed(next_test_broadcast)) {
+    testBroadcast();
+  }
 }
 
 bool MyMesh::advert() {
@@ -1865,4 +1938,114 @@ bool MyMesh::advert() {
   } else {
     return false;
   }
+}
+
+// ========== Network Test Mode Implementation ==========
+
+void MyMesh::getDeviceId(uint8_t* dest) {
+#if defined(NRF52_PLATFORM)
+  // Use last 2 bytes of BLE MAC address (FICR->DEVICEADDR)
+  uint32_t addr0 = NRF_FICR->DEVICEADDR[0];
+  dest[0] = (addr0 >> 0) & 0xFF;
+  dest[1] = (addr0 >> 8) & 0xFF;
+#else
+  // Fallback: use first 2 bytes of public key
+  memcpy(dest, self_id.pub_key, 2);
+#endif
+}
+
+void MyMesh::initTestMode() {
+  test_log_count = 0;
+  test_log_write_idx = 0;
+  test_seq_num = 0;
+  getDeviceId(my_device_id);
+
+  // Schedule first broadcast with random offset to avoid collision
+  uint32_t offset = getRNG()->nextInt(0, 30000);  // 0-30 seconds random offset
+  next_test_broadcast = _ms->getMillis() + offset;
+
+  MESH_DEBUG_PRINTLN("Test mode initialized, device ID: %02X%02X",
+    my_device_id[0], my_device_id[1]);
+}
+
+void MyMesh::testBroadcast() {
+  TestPacket pkt;
+  pkt.magic = TEST_MAGIC_BYTE;
+  memcpy(pkt.device_id, my_device_id, 2);
+  pkt.seq_num = test_seq_num++;
+  pkt.timestamp = getRTCClock()->getCurrentTime();
+
+  // Create raw data packet and send as flood for multi-hop forwarding
+  mesh::Packet* raw = createRawData((uint8_t*)&pkt, sizeof(pkt));
+  if (raw) {
+    sendFlood(raw);
+    MESH_DEBUG_PRINTLN("Test broadcast sent: seq=%d, time=%lu", pkt.seq_num, pkt.timestamp);
+  }
+
+  // Schedule next broadcast
+  next_test_broadcast = _ms->getMillis() + TEST_BROADCAST_INTERVAL;
+}
+
+void MyMesh::logTestPacket(const uint8_t* device_id, uint16_t seq, uint32_t tx_time, uint32_t rx_time,
+                           int8_t snr, int8_t rssi, uint8_t path_len) {
+  // Skip if it's our own packet
+  if (memcmp(device_id, my_device_id, 2) == 0) return;
+
+  // Dedup: check if we already logged this (device_id, seq) combo
+  // We only record the first received (typically shortest path)
+  for (uint16_t i = 0; i < test_log_count && i < MAX_TEST_LOG_ENTRIES; i++) {
+    uint16_t idx = (test_log_write_idx + MAX_TEST_LOG_ENTRIES - 1 - i) % MAX_TEST_LOG_ENTRIES;
+    TestLogEntry* e = &test_log[idx];
+    if (memcmp(e->device_id, device_id, 2) == 0 && e->seq_num == seq) {
+      MESH_DEBUG_PRINTLN("Test log: dup from %02X%02X seq=%d (path=%d vs %d), skipped",
+        device_id[0], device_id[1], seq, path_len, e->path_len);
+      return;  // Already logged this packet
+    }
+  }
+
+  // Time validation: 2025-12-24 00:00:00 UTC = 1735084800
+  const uint32_t MIN_VALID_TIME = 1735084800;
+  if (tx_time < MIN_VALID_TIME) tx_time = 0;
+  if (rx_time < MIN_VALID_TIME) rx_time = 0;
+
+  TestLogEntry entry;
+  memcpy(entry.device_id, device_id, 2);
+  entry.seq_num = seq;
+  entry.tx_time = tx_time;
+  entry.rx_time = rx_time;
+  entry.snr = snr;
+  entry.rssi = rssi;
+  entry.path_len = path_len;
+  entry.reserved = 0;
+
+  // Circular buffer write
+  test_log[test_log_write_idx] = entry;
+  test_log_write_idx = (test_log_write_idx + 1) % MAX_TEST_LOG_ENTRIES;
+  if (test_log_count < MAX_TEST_LOG_ENTRIES) {
+    test_log_count++;
+  }
+
+  int32_t delay = (int32_t)rx_time - (int32_t)tx_time;
+  MESH_DEBUG_PRINTLN("Test log: from %02X%02X, seq=%d, delay=%lds, snr=%d, path=%d",
+    device_id[0], device_id[1], seq, delay, snr, path_len);
+}
+
+void MyMesh::dumpTestLog() {
+  // Output format: CSV for PC parsing
+  // Header: TESTLOG <device_id_hex> <seq_num> <log_count>
+  Serial.printf("TESTLOG %02X%02X %d %d\n",
+    my_device_id[0], my_device_id[1],
+    test_seq_num, test_log_count);
+
+  // Each entry: <device_id>,<seq>,<tx_time>,<rx_time>,<snr>,<rssi>,<path_len>
+  uint16_t start_idx = (test_log_count < MAX_TEST_LOG_ENTRIES) ? 0 :
+                       test_log_write_idx;
+  for (uint16_t i = 0; i < test_log_count; i++) {
+    uint16_t idx = (start_idx + i) % MAX_TEST_LOG_ENTRIES;
+    TestLogEntry* e = &test_log[idx];
+    Serial.printf("%02X%02X,%d,%lu,%lu,%d,%d,%d\n",
+      e->device_id[0], e->device_id[1],
+      e->seq_num, e->tx_time, e->rx_time, e->snr, e->rssi, e->path_len);
+  }
+  Serial.println("TESTLOG_END");
 }

@@ -99,6 +99,7 @@ public:
   void handleCmdFrame(size_t len);
   bool advert();
   void enterCLIRescue();
+  void getDeviceId(uint8_t* dest);
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
 
@@ -108,6 +109,7 @@ protected:
   int calcRxDelay(float score, uint32_t air_time) const override;
   uint8_t getExtraAckTransmitCount() const override;
   bool filterRecvFloodPacket(mesh::Packet* packet) override;
+  bool allowPacketForward(const mesh::Packet* packet) override;
 
   void sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis=0) override;
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
@@ -224,6 +226,44 @@ private:
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+
+  // ========== Network Test Mode ==========
+  #define TEST_MAGIC_BYTE           0xAA
+  #define TEST_BROADCAST_INTERVAL   (10 * 1000)  // 10 seconds for testing
+  #define MAX_TEST_LOG_ENTRIES      1000  // ~10KB storage
+
+  // Test packet structure (broadcast via ADVERT)
+  struct TestPacket {
+    uint8_t  magic;           // TEST_MAGIC_BYTE
+    uint8_t  device_id[2];    // BLE MAC address last 2 bytes
+    uint16_t seq_num;         // Sequence number
+    uint32_t timestamp;       // GPS time (seconds)
+  };
+
+  // Test log entry (14 bytes per entry)
+  struct TestLogEntry {
+    uint8_t  device_id[2];    // Sender device ID (BLE MAC last 2 bytes)
+    uint16_t seq_num;         // Sender sequence number
+    uint32_t tx_time;         // Sender timestamp (GPS seconds)
+    uint32_t rx_time;         // Receiver timestamp (GPS seconds)
+    int8_t   snr;             // SNR * 4
+    int8_t   rssi;            // RSSI
+    uint8_t  path_len;        // Hop count
+    uint8_t  reserved;        // Alignment
+  };
+
+  TestLogEntry test_log[MAX_TEST_LOG_ENTRIES];
+  uint16_t test_log_count;
+  uint16_t test_log_write_idx;    // For circular buffer
+  uint16_t test_seq_num;
+  unsigned long next_test_broadcast;
+  uint8_t my_device_id[2];        // BLE MAC address last 2 bytes
+
+  void initTestMode();
+  void testBroadcast();
+  void logTestPacket(const uint8_t* device_id, uint16_t seq, uint32_t tx_time, uint32_t rx_time,
+                     int8_t snr, int8_t rssi, uint8_t path_len);
+  void dumpTestLog();
 };
 
 extern MyMesh the_mesh;

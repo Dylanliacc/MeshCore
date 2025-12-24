@@ -151,8 +151,11 @@ void setup() {
   );
 
 #ifdef BLE_PIN_CODE
-  char dev_name[32+16];
-  sprintf(dev_name, "%s%s", BLE_NAME_PREFIX, the_mesh.getNodeName());
+  char dev_name[32];
+  // Use last 2 bytes of BLE MAC address for device name
+  uint8_t dev_id[2];
+  the_mesh.getDeviceId(dev_id);
+  sprintf(dev_name, "%s%02X%02X", BLE_NAME_PREFIX, dev_id[0], dev_id[1]);
   serial_interface.begin(dev_name, the_mesh.getBLEPin());
 #else
   serial_interface.begin(Serial);
