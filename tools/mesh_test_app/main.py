@@ -5,6 +5,7 @@ MeshCore Test Controller - Cross-platform serial control application
 
 import os
 import queue
+import random
 import re
 import threading
 import time
@@ -87,13 +88,20 @@ class SerialHandler:
 
 
 class MeshTestApp(ctk.CTk):
-    """Main application window"""
+    """Main application window with Christmas theme"""
+
+    # Christmas color palette
+    XMAS_RED = "#c41e3a"
+    XMAS_GREEN = "#228b22"
+    XMAS_GOLD = "#ffd700"
+    XMAS_SNOW = "#fffafa"
+    XMAS_DARK = "#0d1117"
 
     def __init__(self):
         super().__init__()
 
         # Window setup
-        self.title("MeshCore Test Controller")
+        self.title("🎄 MeshCore Test Controller - Merry Christmas! 🎅")
         self.geometry("1100x700")
         self.minsize(900, 500)
 
@@ -103,11 +111,16 @@ class MeshTestApp(ctk.CTk):
         self.line_buffer = ""
         self.test_logs = []  # Parsed test log entries
 
+        # Snowflake animation
+        self.snowflakes = []
+        self.snow_canvas = None
+
         # Create UI
         self._create_widgets()
 
-        # Start update loop
+        # Start update loops
         self.after(50, self._update_serial)
+        self.after(100, self._animate_snow)
 
     def _create_widgets(self):
         """Create all UI widgets"""
@@ -185,16 +198,21 @@ class MeshTestApp(ctk.CTk):
             btn.grid(row=0, column=i, padx=8, pady=10)
 
         # === Sidebar (Left) ===
-        sidebar = ctk.CTkFrame(self, fg_color="#1a1a2e")
+        sidebar = ctk.CTkFrame(self, fg_color="#0d1117")
         sidebar.grid(row=2, column=0, padx=(10, 5), pady=5, sticky="nsew")
         sidebar.grid_rowconfigure(2, weight=1)
 
         # Device Info Section
-        info_frame = ctk.CTkFrame(sidebar, fg_color="#2d2d44")
+        info_frame = ctk.CTkFrame(
+            sidebar, fg_color="#1a2a1a", border_width=2, border_color=self.XMAS_GREEN
+        )
         info_frame.pack(fill="x", padx=5, pady=5)
 
         ctk.CTkLabel(
-            info_frame, text="📱 设备信息", font=("", 13, "bold"), text_color="#00d4ff"
+            info_frame,
+            text="🎁 设备信息",
+            font=("", 13, "bold"),
+            text_color=self.XMAS_GREEN,
         ).pack(pady=(8, 5))
 
         self.info_labels = {}
@@ -213,14 +231,16 @@ class MeshTestApp(ctk.CTk):
         ctk.CTkFrame(info_frame, height=8, fg_color="transparent").pack()
 
         # Radio Config Section
-        config_frame = ctk.CTkFrame(sidebar, fg_color="#2d2d44")
+        config_frame = ctk.CTkFrame(
+            sidebar, fg_color="#2a1a1a", border_width=2, border_color=self.XMAS_RED
+        )
         config_frame.pack(fill="x", padx=5, pady=5)
 
         ctk.CTkLabel(
             config_frame,
-            text="📻 无线配置",
+            text="🎀 无线配置",
             font=("", 13, "bold"),
-            text_color="#ff9f1c",
+            text_color=self.XMAS_RED,
         ).pack(pady=(8, 5))
 
         self.config_labels = {}
@@ -524,6 +544,30 @@ class MeshTestApp(ctk.CTk):
         """Handle window close"""
         self.serial.disconnect()
         self.destroy()
+
+    def _animate_snow(self):
+        """Animate falling snowflakes in the title bar area"""
+        # Simple snowflake animation using title update
+        snow_chars = ["❄", "❅", "❆", "✻", "✼"]
+        current_title = self.title()
+
+        # Cycle through festive titles
+        titles = [
+            "🎄 MeshCore Test Controller - Merry Christmas! 🎅",
+            "❄️ MeshCore Test Controller - Merry Christmas! 🎁",
+            "🎁 MeshCore Test Controller - Merry Christmas! 🎄",
+            "⭐ MeshCore Test Controller - Merry Christmas! ❄️",
+        ]
+
+        # Find current and switch to next
+        try:
+            idx = titles.index(current_title)
+            next_idx = (idx + 1) % len(titles)
+        except ValueError:
+            next_idx = 0
+
+        self.title(titles[next_idx])
+        self.after(1000, self._animate_snow)  # Update every second
 
 
 def main():
