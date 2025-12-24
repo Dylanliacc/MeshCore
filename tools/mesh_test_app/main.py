@@ -364,6 +364,7 @@ class MeshTestApp(ctk.CTk):
 
     def _cmd_log_dump(self):
         """Send log dump command"""
+        self.test_logs.clear()  # Clear previous logs before new dump
         self._send_cli_cmd("test dump")
 
     def _cmd_reboot(self):
@@ -394,6 +395,11 @@ class MeshTestApp(ctk.CTk):
             self.info_labels["id"].configure(text=match.group(1))
             self.info_labels["seq"].configure(text=match.group(2))
             self.info_labels["log"].configure(text=match.group(3))
+            return
+
+        # Parse TESTLOG header - clear logs when new dump starts
+        if line.startswith("TESTLOG ") and not line.startswith("TESTLOG_END"):
+            self.test_logs.clear()
             return
 
         # Parse Radio Config lines
