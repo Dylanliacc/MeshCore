@@ -582,17 +582,35 @@ class MeshTestApp(ctk.CTk):
         """Export test logs to CSV file"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        # Get receiver device ID from UI
+        receiver_id = self.info_labels["id"].cget("text")
+        if receiver_id == "--":
+            receiver_id = "UNKNOWN"
+
         # Export parsed test logs as CSV
         if self.test_logs:
-            csv_filename = f"mesh_test_log_{timestamp}.csv"
+            csv_filename = f"mesh_test_{receiver_id}_{timestamp}.csv"
             try:
                 with open(csv_filename, "w", encoding="utf-8") as f:
-                    # Write header
-                    f.write("device_id,seq,tx_time,rx_time,snr,rssi,path_len\n")
+                    # Write metadata header
+                    f.write(f"# MeshCore Network Test Log\n")
+                    f.write(f"# Receiver Device ID: {receiver_id}\n")
+                    f.write(
+                        f"# Export Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    )
+                    f.write(f"# Total Entries: {len(self.test_logs)}\n")
+                    f.write(f"#\n")
+                    # Write CSV header
+                    f.write(
+                        "sender_id,seq,tx_time,rx_time,delay_sec,snr,rssi,path_len\n"
+                    )
                     # Write data
                     for entry in self.test_logs:
+                        tx = int(entry["tx_time"])
+                        rx = int(entry["rx_time"])
+                        delay = rx - tx if tx > 0 and rx > 0 else 0
                         f.write(
-                            f"{entry['device_id']},{entry['seq']},{entry['tx_time']},{entry['rx_time']},{entry['snr']},{entry['rssi']},{entry['path_len']}\n"
+                            f"{entry['device_id']},{entry['seq']},{entry['tx_time']},{entry['rx_time']},{delay},{entry['snr']},{entry['rssi']},{entry['path_len']}\n"
                         )
                 self._log_message(
                     f"[系统] 测试日志已导出到 {csv_filename} ({len(self.test_logs)} 条)"
@@ -603,7 +621,7 @@ class MeshTestApp(ctk.CTk):
             self._log_message("[警告] 没有测试日志可导出，请先执行 Log Dump")
 
         # Also export raw log
-        txt_filename = f"mesh_raw_log_{timestamp}.txt"
+        txt_filename = f"mesh_raw_{receiver_id}_{timestamp}.txt"
         try:
             with open(txt_filename, "w", encoding="utf-8") as f:
                 f.writelines(self.log_buffer)
