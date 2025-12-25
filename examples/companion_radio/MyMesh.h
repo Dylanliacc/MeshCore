@@ -229,7 +229,7 @@ private:
 
   // ========== Network Test Mode ==========
   #define TEST_MAGIC_BYTE           0xAA
-  #define TEST_BROADCAST_INTERVAL   (10 * 1000)  // 10 seconds for testing
+  #define TEST_BROADCAST_INTERVAL   (300 * 1000)  // 10 seconds for testing
   #define MAX_TEST_LOG_ENTRIES      1000  // ~10KB storage
 
   // Test packet structure (broadcast via ADVERT)
