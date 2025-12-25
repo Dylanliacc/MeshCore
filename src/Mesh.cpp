@@ -269,9 +269,12 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       break;
     }
     case PAYLOAD_TYPE_RAW_CUSTOM: {
-      if (pkt->isRouteDirect() && !_tables->hasSeen(pkt)) {
-        onRawDataRecv(pkt);
-        //action = routeRecvPacket(pkt);    don't flood route these (yet)
+      if (!_tables->hasSeen(pkt)) {
+        if (pkt->isRouteDirect()) {
+          onRawDataRecv(pkt);
+        }
+        // Enable flood routing for RAW_CUSTOM to support multi-hop test mode
+        action = routeRecvPacket(pkt);
       }
       break;
     }

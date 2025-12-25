@@ -1840,6 +1840,24 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.printf("TESTSTATUS %02X%02X seq=%d log=%d\n",
         my_device_id[0], my_device_id[1],
         test_seq_num, test_log_count);
+    } else if (strcmp(cli_command, "test info") == 0) {
+      uint16_t remaining = MAX_TEST_LOG_ENTRIES - test_log_count;
+      uint32_t used_bytes = (uint32_t)test_log_count * sizeof(TestLogEntry);
+      uint32_t total_bytes = (uint32_t)MAX_TEST_LOG_ENTRIES * sizeof(TestLogEntry);
+      Serial.printf("=== Test Log Buffer Info ===\n");
+      Serial.printf("Device ID: %02X%02X\n", my_device_id[0], my_device_id[1]);
+      Serial.printf("TX Seq: %d\n", test_seq_num);
+      Serial.printf("Entries: %d / %d (%.1f%% used)\n", 
+        test_log_count, MAX_TEST_LOG_ENTRIES,
+        (float)test_log_count * 100.0f / MAX_TEST_LOG_ENTRIES);
+      Serial.printf("Remaining: %d entries\n", remaining);
+      Serial.printf("Memory: %lu / %lu bytes\n", used_bytes, total_bytes);
+      Serial.printf("Circular Mode: %s\n", 
+        test_log_count >= MAX_TEST_LOG_ENTRIES ? "YES (overwriting old)" : "NO");
+    } else if (strcmp(cli_command, "test clear") == 0) {
+      test_log_count = 0;
+      test_log_write_idx = 0;
+      Serial.println("Test log cleared");
     } else if (strcmp(cli_command, "config") == 0) {
       Serial.printf("Radio Config:\n");
       Serial.printf("  freq: %.3f MHz\n", _prefs.freq);
@@ -1849,7 +1867,14 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.printf("  tx_power: %d dBm\n", _prefs.tx_power_dbm);
       Serial.printf("  fwd: %d, flood_max: %d\n", _prefs.enable_fwd, _prefs.flood_max);
     } else if (strcmp(cli_command, "help") == 0) {
-      Serial.println("Commands: test status, test dump, config, reboot, help");
+      Serial.println("Commands:");
+      Serial.println("  test status  - Show test mode status");
+      Serial.println("  test info    - Show log buffer capacity");
+      Serial.println("  test dump    - Dump all test log entries");
+      Serial.println("  test clear   - Clear test log buffer");
+      Serial.println("  config       - Show radio configuration");
+      Serial.println("  reboot       - Reboot device");
+      Serial.println("  help         - Show this help");
     } else {
       Serial.println("  Error: unknown command");
     }

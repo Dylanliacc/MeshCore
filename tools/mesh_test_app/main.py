@@ -179,9 +179,11 @@ class MeshTestApp(ctk.CTk):
         ctrl_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
 
         buttons = [
-            ("📊 Test Status", self._cmd_test_status, "#007bff"),
+            ("📊 Status", self._cmd_test_status, "#007bff"),
+            ("📈 Info", self._cmd_test_info, "#20c997"),
             ("⚙️ Config", self._cmd_config, "#17a2b8"),
-            ("📥 Log Dump", self._cmd_log_dump, "#fd7e14"),
+            ("📥 Dump", self._cmd_log_dump, "#fd7e14"),
+            ("🗑️ Clear", self._cmd_test_clear, "#6610f2"),
             ("🔄 Reboot", self._cmd_reboot, "#dc3545"),
             ("❓ Help", self._cmd_help, "#6c757d"),
         ]
@@ -229,6 +231,38 @@ class MeshTestApp(ctk.CTk):
 
         # Add some padding at bottom
         ctk.CTkFrame(info_frame, height=8, fg_color="transparent").pack()
+
+        # Buffer Info Section
+        buffer_frame = ctk.CTkFrame(
+            sidebar, fg_color="#1a1a2a", border_width=2, border_color=self.XMAS_GOLD
+        )
+        buffer_frame.pack(fill="x", padx=5, pady=5)
+
+        ctk.CTkLabel(
+            buffer_frame,
+            text="💾 缓冲区状态",
+            font=("", 13, "bold"),
+            text_color=self.XMAS_GOLD,
+        ).pack(pady=(8, 5))
+
+        self.buffer_labels = {}
+        for label, key in [
+            ("已用/总量:", "entries"),
+            ("剩余条目:", "remaining"),
+            ("使用率:", "percent"),
+            ("循环模式:", "circular"),
+        ]:
+            row = ctk.CTkFrame(buffer_frame, fg_color="transparent")
+            row.pack(fill="x", padx=10, pady=2)
+            ctk.CTkLabel(row, text=label, font=("", 11), width=70, anchor="w").pack(
+                side="left"
+            )
+            self.buffer_labels[key] = ctk.CTkLabel(
+                row, text="--", font=("Consolas", 11), text_color="#88ccff"
+            )
+            self.buffer_labels[key].pack(side="right", padx=5)
+
+        ctk.CTkFrame(buffer_frame, height=8, fg_color="transparent").pack()
 
         # Radio Config Section
         config_frame = ctk.CTkFrame(
@@ -382,6 +416,14 @@ class MeshTestApp(ctk.CTk):
         """Send config command"""
         self._send_cli_cmd("config")
 
+    def _cmd_test_info(self):
+        """Send test info command"""
+        self._send_cli_cmd("test info")
+
+    def _cmd_test_clear(self):
+        """Send test clear command"""
+        self._send_cli_cmd("test clear")
+
     def _cmd_log_dump(self):
         """Send log dump command"""
         self.test_logs.clear()  # Clear previous logs before new dump
@@ -415,6 +457,35 @@ class MeshTestApp(ctk.CTk):
             self.info_labels["id"].configure(text=match.group(1))
             self.info_labels["seq"].configure(text=match.group(2))
             self.info_labels["log"].configure(text=match.group(3))
+            return
+
+        # Parse test info output: Entries: 342 / 1000 (34.2% used)
+        match = re.match(r"Entries:\s*(\d+)\s*/\s*(\d+)\s*\(([\d.]+)%", line)
+        if match:
+            self.buffer_labels["entries"].configure(
+                text=f"{match.group(1)} / {match.group(2)}"
+            )
+            self.buffer_labels["percent"].configure(text=f"{match.group(3)}%")
+            return
+
+        # Parse remaining entries: Remaining: 658 entries
+        match = re.match(r"Remaining:\s*(\d+)\s*entries", line)
+        if match:
+            self.buffer_labels["remaining"].configure(text=match.group(1))
+            return
+
+        # Parse circular mode: Circular Mode: YES/NO
+        match = re.match(r"Circular Mode:\s*(\w+)", line)
+        if match:
+            mode = match.group(1)
+            if mode == "YES":
+                self.buffer_labels["circular"].configure(
+                    text="是 ⚠️", text_color="#ffaa00"
+                )
+            else:
+                self.buffer_labels["circular"].configure(
+                    text="否", text_color="#88ccff"
+                )
             return
 
         # Parse TESTLOG header - clear logs when new dump starts
